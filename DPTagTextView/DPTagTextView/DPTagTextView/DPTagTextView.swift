@@ -21,6 +21,7 @@ public struct DPTag {
 // MARK: - DPTagTextViewDelegate
 public protocol DPTagTextViewDelegate {
     func dpTagTextView(_ textView: DPTagTextView, didChangedTagSearchString strSearch: String, isHashTag: Bool)
+    func dpTagTextView(_ textView: DPTagTextView, inOutTagString strSearch: String, inOut: Bool, isHashTag: Bool)
     func dpTagTextView(_ textView: DPTagTextView, didInsertTag tag: DPTag)
     func dpTagTextView(_ textView: DPTagTextView, didRemoveTag tag: DPTag)
     func dpTagTextView(_ textView: DPTagTextView, didSelectTag tag: DPTag)
@@ -39,6 +40,8 @@ public protocol DPTagTextViewDelegate {
 
 public extension DPTagTextViewDelegate {
     func dpTagTextView(_ textView: DPTagTextView, didChangedTagSearchString strSearch: String, isHashTag: Bool) {}
+    
+
     func dpTagTextView(_ textView: DPTagTextView, didInsertTag tag: DPTag) {}
     func dpTagTextView(_ textView: DPTagTextView, didRemoveTag tag: DPTag) {}
     func dpTagTextView(_ textView: DPTagTextView, didSelectTag tag: DPTag) {}
@@ -83,7 +86,7 @@ open class DPTagTextView: UITextView {
     open var allowsHashTagUsingSpace : Bool = true
     
     private var currentTaggingRange: NSRange?
-    private var currentTaggingText: String? {
+    public var currentTaggingText: String? {
         didSet {
             if let tag = currentTaggingText, tag != oldValue {
                 dpTagDelegate?.dpTagTextView(self, didChangedTagSearchString:tag, isHashTag: isHashTag)
@@ -91,7 +94,14 @@ open class DPTagTextView: UITextView {
         }
     }
     private var tagRegex: NSRegularExpression {
-        try! NSRegularExpression(pattern: "(\(mentionSymbol)|\(hashTagSymbol))([^\\s\\K]+)")
+        var pattern = ""
+        if isHashTag {
+            pattern = "(\(hashTagSymbol))([A-Za-z0-9_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u017F\\u0391-\\u03CE\\u0400-\\u052F\\u0590-\\u06FF\\u0900-\\u09FF\\u1100-\\u11FF\\u30A0-\\u30FF\\u4E00-\\u9FFF]+)"
+        } else {
+            pattern = "(\(mentionSymbol))([a-zA-Z0-9_.]+)"
+        }
+        return try! NSRegularExpression(pattern: pattern)
+//        try! NSRegularExpression(pattern: "(\(mentionSymbol)|\(hashTagSymbol))([^\\s\\K]+)")
     }
     private var isHashTag = false
     private var tapGesture = UITapGestureRecognizer()
@@ -102,7 +112,6 @@ open class DPTagTextView: UITextView {
         super.init(coder: coder)
         setup()
     }
-
 }
 
 // MARK: - Public methods
@@ -113,7 +122,7 @@ public extension DPTagTextView {
         guard let allText = (allText == nil ? text : allText) else { return }
         
         let origin = (allText as NSString).substring(with: range)
-        let tag = isHashTag ? hashTagSymbol.appending(tagText) : tagText
+        let tag = tagText
         let replace = isAppendSpace ? tag.appending(" ") : tag
         let changed = (allText as NSString).replacingCharacters(in: range, with: replace)
         let tagRange = NSMakeRange(range.location, tag.utf16.count)
@@ -191,20 +200,65 @@ private extension DPTagTextView {
         var matchedRange: NSRange?
         var matchedString: String?
         let tag = String(taggingCharacters.reversed())
+        let nowTagString = (taggingText as NSString).substring(to: selectedLocation)
         let textRange = NSMakeRange(selectedLocation-tag.count, tag.count)
         
         guard tag == mentionSymbol || tag == hashTagSymbol  else {
             let matched = tagRegex.matches(in: taggingText, options: .reportCompletion, range: textRange)
-            if matched.count > 0, let range = matched.last?.range {
+            if matched.count > 0, let range = matched.last?.range, range.length == textRange.length {
                 matchedRange = range
-                matchedString = (taggingText as NSString).substring(with: range).replacingOccurrences(of: isHashTag ? hashTagSymbol : mentionSymbol, with: "")
+                matchedString = tag
             }
             return (matchedRange, matchedString)
         }
         
-        matchedRange = nil//textRange
-        matchedString = nil//isHashTag ? hashTag : symbol
+        matchedRange = textRange//textRange
+        matchedString = tag//isHashTag ? hashTag : symbol
         return (matchedRange, matchedString)
+    }
+    
+    public func firsrtMatchString(_ string: String) -> String? {
+        let matched = tagRegex.matches(in: string, options: .reportCompletion, range: NSMakeRange(0, string.count))
+        if matched.count > 0, let range = matched.first?.range {
+            return (string as NSString).substring(with: range)
+        }
+        return nil
+    }
+    
+    func checkTagEdit(textView: UITextView) {
+        let selectedLocation = textView.selectedRange.location
+        let taggingText = (textView.text as NSString).substring(with: NSMakeRange(0, selectedLocation))
+        let space: Character = " "
+        let lineBrak: Character = "\n"
+        var tagable: Bool = false
+        var characters: [Character] = []
+        var isHashTag = false
+        for char in Array(taggingText).reversed() {
+            if char == mentionSymbol.first {
+                characters.append(char)
+                isHashTag = false
+                tagable = true
+                break
+            } else if char == hashTagSymbol.first {
+                characters.append(char)
+                isHashTag = true
+                tagable = true
+                break
+            }
+            else if char == space || char == lineBrak {
+                tagable = false
+                break
+            }
+            characters.append(char)
+        }
+        
+        let data = matchedData(taggingCharacters: characters, selectedLocation: selectedLocation, taggingText: taggingText)
+        let tag = String(characters.reversed())
+        if  data.0 != nil {
+            dpTagDelegate?.dpTagTextView(self, inOutTagString: tag, inOut: true, isHashTag: isHashTag)
+        } else {
+            dpTagDelegate?.dpTagTextView(self, inOutTagString: tag, inOut: false, isHashTag: isHashTag)
+        }
     }
     
     func tagging(textView: UITextView) {
@@ -229,6 +283,7 @@ private extension DPTagTextView {
             }
             else if char == space || char == lineBrak {
                 tagable = false
+                isHashTag = false
                 break
             }
             characters.append(char)
@@ -302,7 +357,7 @@ private extension DPTagTextView {
             let newText = (text as NSString).replacingCharacters(in: range, with: replacementText)
             let taggingText = (newText as NSString).substring(with: NSMakeRange(0, selectedLocation + 1))
             if let tag = taggingText.sliceMultipleTimes(from: "#", to: " ").last {
-                addTag(allText: newText, tagText: tag, isAppendSpace: false)
+                addTag(allText: newText, tagText: "#" + tag, isAppendSpace: true)
             }
         }
     }
@@ -314,12 +369,12 @@ extension DPTagTextView: UITextViewDelegate {
     
     public func textViewDidChange(_ textView: UITextView) {
         tagging(textView: textView)
-        updateAttributeText(selectedLocation: textView.selectedRange.location)
         dpTagDelegate?.textViewDidChange(self)
     }
     
     public func textViewDidChangeSelection(_ textView: UITextView) {
         tagging(textView: textView)
+        checkTagEdit(textView: textView)
         dpTagDelegate?.textViewDidChangeSelection(self)
     }
     
@@ -338,6 +393,7 @@ extension DPTagTextView: UITextViewDelegate {
     }
     
     public func textViewDidBeginEditing(_ textView: UITextView) {
+        checkTagEdit(textView: textView)
         dpTagDelegate?.textViewDidBeginEditing(self)
     }
     

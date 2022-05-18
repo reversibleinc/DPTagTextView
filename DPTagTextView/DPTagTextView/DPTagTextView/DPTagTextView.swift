@@ -316,6 +316,7 @@ private extension DPTagTextView {
     }
     
     func updateArrTags(range: NSRange, textCount: Int) {
+        let oldCount = arrTags.count
         arrTags = arrTags.filter({ (dpTag) -> Bool in
             if dpTag.range.location < range.location && range.location < dpTag.range.location+dpTag.range.length {
                 dpTagDelegate?.dpTagTextView(self, didRemoveTag: dpTag)
@@ -329,6 +330,10 @@ private extension DPTagTextView {
             }
             return true
         })
+        
+        if arrTags.count != oldCount {
+            updateAttributeText(selectedLocation: selectedRange.location)
+        }
         
         for i in 0 ..< arrTags.count {
             var location = arrTags[i].range.location
@@ -352,11 +357,11 @@ private extension DPTagTextView {
     }
     
     func addHashTagWithSpace(_ replacementText: String, _ range: NSRange) {
-        if isHashTag && replacementText == " " && allowsHashTagUsingSpace {
+        if isHashTag && (replacementText == " " || replacementText == "\n") && allowsHashTagUsingSpace {
             let selectedLocation = selectedRange.location
             let newText = (text as NSString).replacingCharacters(in: range, with: replacementText)
             let taggingText = (newText as NSString).substring(with: NSMakeRange(0, selectedLocation + 1))
-            if let tag = taggingText.sliceMultipleTimes(from: "#", to: " ").last {
+            if let tag = taggingText.sliceMultipleTimes(from: "#", to: replacementText).last {
                 addTag(allText: newText, tagText: "#" + tag, isAppendSpace: true)
             }
         }

@@ -106,7 +106,6 @@ open class DPTagTextView: UITextView {
     private var isHashTag = false
     private var tapGesture = UITapGestureRecognizer()
     
-    
     // MARK: - init
     required public init?(coder: NSCoder) {
         super.init(coder: coder)
@@ -172,6 +171,7 @@ private extension DPTagTextView {
     
     func setup() {
         delegate = self
+        layoutManager.allowsNonContiguousLayout = false
     }
     
     @objc final func tapOnTextView(_ recognizer: UITapGestureRecognizer) {
@@ -261,6 +261,7 @@ private extension DPTagTextView {
         }
     }
     
+    
     func tagging(textView: UITextView) {
         let selectedLocation = textView.selectedRange.location
         let taggingText = (textView.text as NSString).substring(with: NSMakeRange(0, selectedLocation))
@@ -301,12 +302,10 @@ private extension DPTagTextView {
     }
     
     func updateAttributeText(selectedLocation: Int) {
-        
-        if let marketRange = markedTextRange, marketRange.isEmpty == false {
+        if self.marketText != nil {
             return
         }
-    
-        
+        let selectRange = selectedRange
         let attributedString = NSMutableAttributedString(string: text)
     
         attributedString.addAttributes(textViewAttributes, range: NSMakeRange(0, text.utf16.count))
@@ -317,30 +316,85 @@ private extension DPTagTextView {
             }
             attributedString.addAttributes(customTextAttributes, range: dpTag.range)
         }
-        
+        let contentOffset = self.contentOffset
         attributedText = attributedString
         if selectedLocation > 0 { selectedRange = NSMakeRange(selectedLocation, 0) }
+        self.contentOffset = contentOffset
     }
     
-    func updateArrTags(range: NSRange, textCount: Int) {
-        let oldCount = arrTags.count
-        arrTags = arrTags.filter({ (dpTag) -> Bool in
-            if dpTag.range.location < range.location && range.location < dpTag.range.location+dpTag.range.length {
-                dpTagDelegate?.dpTagTextView(self, didRemoveTag: dpTag)
-                return false
+    
+    var marketText: String? {
+        if let marketRange = self.markedTextRange {
+            return self.text(in: marketRange)
+        }
+        return nil
+    }
+
+    func fixedWhenMarketTextUnmatch() {
+        var matched: [DPTag] = []
+        for i in 0 ..< arrTags.count {
+            var tag = arrTags[i]
+            if let last = matched.last(where: { t in
+                return t.name == tag.name
+            }) {
+                let text = (self.text as NSString).substring(from: last.range.location + last.range.length)
+                let range = (text as NSString).range(of: tag.name)
+                if range.length > 0 {
+                    tag.range = NSRange(location: range.location + last.range.location + last.range.length, length: range.length)
+                } else {
+                    tag.range = NSRange(location: 0, length: 0)
+                }
+                arrTags[i] = tag
+                matched.append(tag)
+            } else {
+                let range = (self.text as NSString).range(of: tag.name)
+                if range.length > 0 {
+                    tag.range = range
+                } else {
+                    tag.range = NSRange(location: 0, length: 0)
+                }
+                arrTags[i] = tag
+                matched.append(tag)
             }
-            if range.length > 0 {
-                if range.location <= dpTag.range.location && dpTag.range.location < range.location+range.length {
+            
+
+        }
+        if  self.marketText != nil {
+            updateTypingAttributes()
+        }
+    }
+    
+    func updateTypingAttributes (){
+        var attri = textViewAttributes
+        attri[.backgroundColor] = UIColor.black.withAlphaComponent(0.1)
+        self.typingAttributes = attri
+    }
+    
+    func updateArrTags(range: NSRange, textCount: Int, text: String) {
+        let oldCount = arrTags.count
+        var didUpdateRange = false
+        
+        var marketText = self.marketText ?? ""
+       
+        
+        if marketText.isEmpty == false {
+            updateTypingAttributes()
+        } else {
+            arrTags = arrTags.filter({ (dpTag) -> Bool in
+                if dpTag.range.location < range.location && range.location < dpTag.range.location+dpTag.range.length {
                     dpTagDelegate?.dpTagTextView(self, didRemoveTag: dpTag)
                     return false
                 }
-            }
-            return true
-        })
-        
-        if arrTags.count != oldCount {
-            updateAttributeText(selectedLocation: selectedRange.location)
+                if range.length > 0 {
+                    if range.location <= dpTag.range.location && dpTag.range.location < range.location+range.length {
+                        dpTagDelegate?.dpTagTextView(self, didRemoveTag: dpTag)
+                        return false
+                    }
+                }
+                return true
+            })
         }
+
         
         for i in 0 ..< arrTags.count {
             var location = arrTags[i].range.location
@@ -356,23 +410,27 @@ private extension DPTagTextView {
                     location += textCount
                 }
                 arrTags[i].range = NSMakeRange(location, length)
+                didUpdateRange = true
             }
         }
         
+    
         currentTaggingText = nil
         dpTagDelegate?.dpTagTextView(self, didChangedTags: arrTags)
     }
     
-    func addHashTagWithSpace(_ replacementText: String, _ range: NSRange) {
+    func addHashTagWithSpace(_ replacementText: String, _ range: NSRange) -> Bool {
         if isHashTag && (replacementText == " " || replacementText == "\n") && allowsHashTagUsingSpace {
             let selectedLocation = selectedRange.location
             let newText = (text as NSString).replacingCharacters(in: range, with: replacementText)
             let taggingText = (newText as NSString).substring(with: NSMakeRange(0, selectedLocation + 1))
             if let tag = taggingText.sliceMultipleTimes(from: "#", to: replacementText).last,
                tag.trimmingCharacters(in: .whitespacesAndNewlines).count > 0 {
-                addTag(allText: newText, tagText: "#" + tag, isAppendSpace: true)
+                addTag(allText: text, tagText: "#" + tag, isAppendSpace: true)
+                return true
             }
         }
+        return false
     }
     
 }
@@ -382,19 +440,23 @@ extension DPTagTextView: UITextViewDelegate {
     
     public func textViewDidChange(_ textView: UITextView) {
         tagging(textView: textView)
-        updateAttributeText(selectedLocation: textView.selectedRange.location)
+        updateAttributeText(selectedLocation: selectedRange.location)
         dpTagDelegate?.textViewDidChange(self)
     }
     
     public func textViewDidChangeSelection(_ textView: UITextView) {
         tagging(textView: textView)
+        fixedWhenMarketTextUnmatch()
         checkTagEdit(textView: textView)
         dpTagDelegate?.textViewDidChangeSelection(self)
     }
     
     public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-        addHashTagWithSpace(text, range)
-        updateArrTags(range: range, textCount: text.utf16.count)
+        if addHashTagWithSpace(text, range) && text != "\n" {
+            updateArrTags(range: range, textCount: text.utf16.count, text: text)
+            return false
+        }
+        updateArrTags(range: range, textCount: text.utf16.count, text: text)
         return dpTagDelegate?.textView(self, shouldChangeTextIn: range, replacementText: text) ?? true
     }
     

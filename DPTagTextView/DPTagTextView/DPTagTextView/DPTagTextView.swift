@@ -301,7 +301,14 @@ private extension DPTagTextView {
     }
     
     func updateAttributeText(selectedLocation: Int) {
+        
+        if let marketRange = markedTextRange, marketRange.isEmpty == false {
+            return
+        }
+    
+        
         let attributedString = NSMutableAttributedString(string: text)
+    
         attributedString.addAttributes(textViewAttributes, range: NSMakeRange(0, text.utf16.count))
         arrTags.forEach { (dpTag) in
             guard let customTextAttributes = dpTag.customTextAttributes else {
@@ -361,7 +368,8 @@ private extension DPTagTextView {
             let selectedLocation = selectedRange.location
             let newText = (text as NSString).replacingCharacters(in: range, with: replacementText)
             let taggingText = (newText as NSString).substring(with: NSMakeRange(0, selectedLocation + 1))
-            if let tag = taggingText.sliceMultipleTimes(from: "#", to: replacementText).last {
+            if let tag = taggingText.sliceMultipleTimes(from: "#", to: replacementText).last,
+               tag.trimmingCharacters(in: .whitespacesAndNewlines).count > 0 {
                 addTag(allText: newText, tagText: "#" + tag, isAppendSpace: true)
             }
         }
@@ -374,6 +382,7 @@ extension DPTagTextView: UITextViewDelegate {
     
     public func textViewDidChange(_ textView: UITextView) {
         tagging(textView: textView)
+        updateAttributeText(selectedLocation: textView.selectedRange.location)
         dpTagDelegate?.textViewDidChange(self)
     }
     

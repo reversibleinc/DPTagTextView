@@ -85,7 +85,7 @@ open class DPTagTextView: UITextView {
     open var dpTagDelegate : DPTagTextViewDelegate?
     open var allowsHashTagUsingSpace : Bool = true
     
-    private var currentTaggingRange: NSRange?
+    public var currentTaggingRange: NSRange?
     public var currentTaggingText: String? {
         didSet {
             if let tag = currentTaggingText, tag != oldValue {
@@ -96,14 +96,14 @@ open class DPTagTextView: UITextView {
     private var tagRegex: NSRegularExpression {
         var pattern = ""
         if isHashTag {
-            pattern = "(\(hashTagSymbol))([A-Za-z0-9_\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u017F\\u0391-\\u03CE\\u0400-\\u052F\\u0590-\\u06FF\\u0900-\\u09FF\\u1100-\\u11FF\\u30A0-\\u30FF\\u4E00-\\u9FFF]+)"
+            pattern = "(\(hashTagSymbol))([A-Za-z0-9_.-\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u017F\\u0391-\\u03CE\\u0400-\\u052F\\u0590-\\u06FF\\u0900-\\u09FF\\u1100-\\u11FF\\u30A0-\\u30FF\\u4E00-\\u9FFF]+)"
         } else {
-            pattern = "(\(mentionSymbol))([a-zA-Z0-9_.]+)"
+            pattern = "(\(mentionSymbol))([a-zA-Z0-9_.-]+)"
         }
         return try! NSRegularExpression(pattern: pattern)
 //        try! NSRegularExpression(pattern: "(\(mentionSymbol)|\(hashTagSymbol))([^\\s\\K]+)")
     }
-    private var isHashTag = false
+    public var isHashTag = false
     private var tapGesture = UITapGestureRecognizer()
     
     // MARK: - init
@@ -125,6 +125,20 @@ public extension DPTagTextView {
         let replace = isAppendSpace ? tag.appending(" ") : tag
         let changed = (allText as NSString).replacingCharacters(in: range, with: replace)
         let tagRange = NSMakeRange(range.location, tag.utf16.count)
+        var newArrTags: [DPTag] = []
+        var tagId = id
+        arrTags.forEach { tagItem in
+            if tagItem.name == tag && tagItem.range == range {
+                // 有一样的，复用之前的tag id
+                tagId = tagItem.id
+            } else if (tagRange.location >= tagItem.range.location && tagRange.location < (tagItem.range.location + tagItem.range.length))
+                        || ((tagItem.range.location + tagItem.range.length) > range.location && (tagItem.range.location + tagItem.range.length) <= (range.location + range.length)) {
+                // 有交叉，忽略现有的
+            } else {
+                newArrTags.append(tagItem)
+            }
+        }
+        arrTags = newArrTags
         
         let dpTag = DPTag(id: id, name: tagText, range: tagRange, data: data, isHashTag: isHashTag, customTextAttributes: customTextAttributes)
         arrTags.append(dpTag)
@@ -167,7 +181,7 @@ public extension DPTagTextView {
 
 
 // MARK: - Private methods
-private extension DPTagTextView {
+public extension DPTagTextView {
     
     func setup() {
         delegate = self
@@ -263,7 +277,10 @@ private extension DPTagTextView {
     
     
     func tagging(textView: UITextView) {
-        let selectedLocation = textView.selectedRange.location
+        var selectedLocation = textView.selectedRange.location
+        if selectedLocation > textView.text.count {
+            selectedLocation = textView.text.count
+        }
         let taggingText = (textView.text as NSString).substring(with: NSMakeRange(0, selectedLocation))
         let space: Character = " "
         let lineBrak: Character = "\n"
@@ -359,7 +376,7 @@ private extension DPTagTextView {
             
 
         }
-        if  self.marketText != nil {
+        if self.marketText != nil {
             updateTypingAttributes()
         }
     }
@@ -419,7 +436,8 @@ private extension DPTagTextView {
         dpTagDelegate?.dpTagTextView(self, didChangedTags: arrTags)
     }
     
-    func addHashTagWithSpace(_ replacementText: String, _ range: NSRange) -> Bool {
+    @discardableResult
+    public func addHashTagWithSpace(_ replacementText: String, _ range: NSRange) -> Bool {
         if isHashTag && (replacementText == " " || replacementText == "\n") && allowsHashTagUsingSpace {
             let selectedLocation = selectedRange.location
             let newText = (text as NSString).replacingCharacters(in: range, with: replacementText)
@@ -452,6 +470,11 @@ extension DPTagTextView: UITextViewDelegate {
     }
     
     public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        if let currentTaggingText = currentTaggingText, text == hashTagSymbol {
+            addHashTagWithSpace(" ", range)
+            updateArrTags(range: range, textCount: 1, text: text)
+            return true
+        }
         if addHashTagWithSpace(text, range) && text != "\n" {
             updateArrTags(range: range, textCount: text.utf16.count, text: text)
             return false
@@ -474,6 +497,19 @@ extension DPTagTextView: UITextViewDelegate {
     }
     
     public func textViewDidEndEditing(_ textView: UITextView) {
+        // 结束编辑后，判断是否主动添加正在编辑的tag
+        if let currentTaggingText = currentTaggingText, (currentTaggingText as NSString).contains(hashTagSymbol), let tagRange = self.currentTaggingRange {
+            // 与上一个tag一致，则不需添加
+            var ignoreTag = false
+            self.arrTags.forEach { tag in
+                if tag.range == tagRange {
+                    ignoreTag = true
+                }
+            }
+            if ignoreTag == false {
+                self.addTag(tagText: currentTaggingText, isAppendSpace: true)
+            }
+        }
         dpTagDelegate?.textViewDidEndEditing(self)
     }
     
